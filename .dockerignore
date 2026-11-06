@@ -1,0 +1,3 @@
+# Only target/app.jar is needed in the build context.
+*
+!target/app.jar

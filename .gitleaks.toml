@@ -1,0 +1,5 @@
+# Uses gitleaks' built-in rules. Add project-specific rules or allowlists here.
+title = "gradecalc gitleaks config"
+
+[extend]
+useDefault = true

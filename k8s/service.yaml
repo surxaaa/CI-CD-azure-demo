@@ -1,0 +1,14 @@
+# type LoadBalancer makes AKS allocate a public IP on the Azure load balancer.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gradecalc
+  namespace: gradecalc
+spec:
+  type: LoadBalancer
+  selector:
+    app: gradecalc
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

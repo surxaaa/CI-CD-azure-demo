@@ -1,0 +1,54 @@
+---
+# Renders the manifests in k8s/ with the image to deploy, applies them and
+# waits for the rollout.
+#
+#   ansible-playbook -i ansible/inventory.ini ansible/deploy.yml -e image=<registry>/gradecalc:<tag>
+- name: Deploy GradeCalc to Kubernetes
+  hosts: deployer
+  gather_facts: false
+
+  vars:
+    namespace: gradecalc
+    rollout_timeout: 180s
+    manifest_dir: "{{ playbook_dir }}/../k8s"
+
+  tasks:
+    - name: Require an image to deploy
+      ansible.builtin.assert:
+        that: image is defined and image | length > 0
+        fail_msg: "Pass the image with -e image=<registry>/gradecalc:<tag>"
+
+    - name: Create a working directory for rendered manifests
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: k8s
+      register: rendered
+
+    - name: Render manifests
+      ansible.builtin.template:
+        src: "{{ manifest_dir }}/{{ item }}"
+        dest: "{{ rendered.path }}/{{ item }}"
+        mode: "0600"
+      loop:
+        - namespace.yaml
+        - deployment.yaml
+        - service.yaml
+
+    - name: Apply the namespace first so the other resources have somewhere to go
+      ansible.builtin.command: kubectl apply -f {{ rendered.path }}/namespace.yaml
+      register: apply_namespace
+      changed_when: "'unchanged' not in apply_namespace.stdout"
+
+    - name: Apply the deployment and service
+      ansible.builtin.command: kubectl apply -f {{ rendered.path }}/deployment.yaml -f {{ rendered.path }}/service.yaml
+      register: apply_app
+      changed_when: "'configured' in apply_app.stdout or 'created' in apply_app.stdout"
+
+    - name: Wait for the rollout to finish
+      ansible.builtin.command: kubectl -n {{ namespace }} rollout status deployment/gradecalc --timeout={{ rollout_timeout }}
+      changed_when: false
+
+    - name: Remove rendered manifests
+      ansible.builtin.file:
+        path: "{{ rendered.path }}"
+        state: absent

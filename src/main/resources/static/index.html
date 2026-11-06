@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GradeCalc</title>
+<style>
+  :root { --ink: #1f2933; --muted: #616e7c; --line: #d9e2ec; --accent: #0b6bcb; --bad: #b42318; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: #f5f7fa; }
+  main { width: min(30rem, 100% - 2rem); margin: 3rem 0 1.5rem; padding: 2rem; background: #fff;
+         border: 1px solid var(--line); border-radius: 12px; }
+  h1 { margin: 0 0 1.5rem; font-size: 1.5rem; }
+  label { display: block; margin-bottom: .25rem; font-weight: 600; }
+  input { width: 100%; padding: .6rem .75rem; font: inherit; border: 1px solid var(--line); border-radius: 8px; }
+  .hint { margin: .25rem 0 1rem; font-size: .875rem; color: var(--muted); }
+  button { width: 100%; padding: .6rem; font: inherit; font-weight: 600; color: #fff; background: var(--accent);
+           border: 0; border-radius: 8px; cursor: pointer; }
+  #result { min-height: 3rem; margin-top: 1.25rem; }
+  #result.error { color: var(--bad); }
+  .grade { font-size: 2rem; font-weight: 700; }
+  footer { width: min(30rem, 100% - 2rem); font-size: .8rem; color: var(--muted); }
+  code { font-family: ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="message">GradeCalc</h1>
+  <form id="form">
+    <label for="marks">Marks</label>
+    <input id="marks" placeholder="85, 72, 91" autocomplete="off" required>
+    <p class="hint">Comma-separated, each from 0 to 100.</p>
+    <button type="submit">Calculate grade</button>
+  </form>
+  <div id="result" aria-live="polite"></div>
+</main>
+<footer>Version <code id="version">-</code> · commit <code id="commit">-</code> · pod <code id="pod">-</code></footer>
+<script>
+  const result = document.getElementById('result');
+
+  fetch('/api/info').then(r => r.json()).then(info => {
+    document.getElementById('message').textContent = info.message;
+    document.getElementById('version').textContent = info.version;
+    document.getElementById('commit').textContent = info.commit.slice(0, 7);
+    document.getElementById('pod').textContent = info.pod;
+  });
+
+  document.getElementById('form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const marks = document.getElementById('marks').value.split(',').map(s => s.trim()).filter(Boolean).map(Number);
+    const response = await fetch('/api/grades', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ marks })
+    });
+    const body = await response.json();
+    result.className = response.ok ? '' : 'error';
+    if (response.ok) {
+      result.innerHTML = '<div class="grade"></div><div class="detail"></div>';
+      result.querySelector('.grade').textContent = body.grade;
+      result.querySelector('.detail').textContent =
+        `Average ${body.average} · grade point ${body.gradePoint} · ${body.passed ? 'Pass' : 'Fail'}`;
+    } else {
+      result.textContent = body.error || 'Could not calculate the grade. Check the marks and try again.';
+    }
+  });
+</script>
+</body>
+</html>

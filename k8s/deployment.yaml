@@ -1,0 +1,68 @@
+# Rendered by ansible/deploy.yml, which fills in {{ image }}.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gradecalc
+  namespace: gradecalc
+  labels:
+    app: gradecalc
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gradecalc
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0   # keep full capacity while new pods start
+  template:
+    metadata:
+      labels:
+        app: gradecalc
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gradecalc
+          image: "{{ image }}"
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24   # up to 2 minutes to start
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp   # Tomcat needs a writable temp directory
+      volumes:
+        - name: tmp
+          emptyDir: {}

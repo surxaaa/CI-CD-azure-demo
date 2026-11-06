@@ -1,0 +1,186 @@
+name: CI-CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege by default; jobs that sign in to Azure add id-token: write.
+permissions:
+  contents: read
+
+# Never run two deployments at once; a newer push waits for the current one.
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ${{ vars.ACR_LOGIN_SERVER }}/gradecalc:${{ github.sha }}
+
+jobs:
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # scan the full history, not just the latest commit
+
+      - name: Scan repository history for secrets
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            git /repo --config /repo/.gitleaks.toml --redact --verbose
+
+  build-test:
+    name: Build and test (Maven)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Compile and package
+        run: mvn -B -DskipTests package
+
+      - name: Run automated tests
+        run: mvn -B test
+
+      - name: Add test results to the run summary
+        if: always()
+        run: |
+          echo "### Test results" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -h "Tests run" target/surefire-reports/*.txt >> "$GITHUB_STEP_SUMMARY" || echo "No test reports found" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: target/surefire-reports/
+
+      - name: Upload application jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-jar
+          path: target/app.jar
+          if-no-files-found: error
+
+  publish-image:
+    name: Build and push image (Docker to ACR)
+    needs: [secret-scan, build-test]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Download the tested jar
+        uses: actions/download-artifact@v8
+        with:
+          name: app-jar
+          path: target/
+
+      - name: Sign in to Azure (OIDC, no stored password)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign in to the container registry
+        run: az acr login --name "${{ vars.ACR_NAME }}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build, tag and push the image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}
+            ${{ vars.ACR_LOGIN_SERVER }}/gradecalc:latest
+          build-args: |
+            APP_COMMIT=${{ github.sha }}
+
+  deploy:
+    name: Deploy and verify (AKS)
+    needs: publish-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Sign in to Azure (OIDC, no stored password)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v5
+
+      - name: Connect to the AKS cluster
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ vars.AKS_CLUSTER }}
+
+      - name: Install Ansible
+        run: pipx install ansible-core
+
+      - name: Deploy to Kubernetes with Ansible
+        run: ansible-playbook -i ansible/inventory.ini ansible/deploy.yml -e "image=$IMAGE"
+
+      - name: Verify deployment status
+        run: |
+          kubectl -n gradecalc get deployment,pods,service -o wide
+          ready=$(kubectl -n gradecalc get deployment gradecalc -o jsonpath='{.status.readyReplicas}')
+          wanted=$(kubectl -n gradecalc get deployment gradecalc -o jsonpath='{.spec.replicas}')
+          echo "Ready replicas: ${ready:-0}/$wanted"
+          test "${ready:-0}" = "$wanted"
+
+      - name: Verify the new version is live at the endpoint
+        run: |
+          # Azure can take a minute or two to assign the public IP on first deploy.
+          for attempt in $(seq 1 30); do
+            ip=$(kubectl -n gradecalc get service gradecalc -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            [ -n "$ip" ] && break
+            sleep 10
+          done
+          if [ -z "$ip" ]; then
+            echo "::error::The service did not get a public IP"
+            exit 1
+          fi
+
+          # Fail unless the endpoint reports the commit this run built.
+          for attempt in $(seq 1 30); do
+            live=$(curl -fsS --max-time 5 "http://$ip/api/info" | jq -r .commit || true)
+            if [ "$live" = "$GITHUB_SHA" ]; then
+              echo "Commit $GITHUB_SHA is live at http://$ip"
+              echo "### Live at http://$ip (commit \`${GITHUB_SHA::7}\`)" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Endpoint reports commit '$live', expected '$GITHUB_SHA'"
+          exit 1
