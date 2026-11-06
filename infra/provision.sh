@@ -4,12 +4,13 @@
 #
 #   GITHUB_REPO=<owner>/<repo> ./infra/provision.sh
 #
-# Azure for Students subscriptions often allow only some regions and VM sizes.
+# Azure for Students subscriptions allow only some regions and VM sizes. List them with:
+#   az policy assignment list --query "[].parameters"
 # If creation is refused, set LOCATION and/or NODE_SIZE and run again.
 set -euo pipefail
 
 GITHUB_REPO="${GITHUB_REPO:?Set GITHUB_REPO to owner/repo}"
-LOCATION="${LOCATION:-centralindia}"
+LOCATION="${LOCATION:-indiasouthcentral}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-gradecalc}"
 AKS_CLUSTER="${AKS_CLUSTER:-aks-gradecalc}"
 NODE_SIZE="${NODE_SIZE:-Standard_B2s}"
