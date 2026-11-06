@@ -54,7 +54,10 @@ SP_OBJECT_ID=$(az ad sp show --id "$CLIENT_ID" --query id -o tsv)
 
 # Only workflows running on main of this repository can use the identity.
 CREDENTIAL_NAME=github-main
-SUBJECT="repo:${GITHUB_REPO}:ref:refs/heads/main"
+# Ask GitHub for the subject prefix: it can include the numeric owner and repository
+# IDs, in which case it stops matching if the repository is recreated under the same name.
+SUBJECT_PREFIX=$(gh api "repos/$GITHUB_REPO/actions/oidc/customization/sub" --jq .sub_claim_prefix)
+SUBJECT="${SUBJECT_PREFIX}:ref:refs/heads/main"
 az ad app federated-credential delete --id "$CLIENT_ID" --federated-credential-id "$CREDENTIAL_NAME" 2>/dev/null || true
 az ad app federated-credential create --id "$CLIENT_ID" --output none --parameters "{
   \"name\": \"$CREDENTIAL_NAME\",
