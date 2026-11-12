@@ -1,4 +1,4 @@
-# Rendered by ansible/deploy.yml, which fills in {{ image }}.
+# Rendered by ansible/deploy.yml, which fills in {{ image }} and the change cause.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,8 +6,11 @@ metadata:
   namespace: gradecalc
   labels:
     app: gradecalc
+  annotations:
+    kubernetes.io/change-cause: {{ change_cause | to_json }}   # shown by kubectl rollout history
 spec:
   replicas: 2
+  revisionHistoryLimit: 10   # old ReplicaSets kept for rollback
   selector:
     matchLabels:
       app: gradecalc
@@ -30,6 +33,12 @@ spec:
       containers:
         - name: gradecalc
           image: "{{ image }}"
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gradecalc-secrets
+                  key: DB_PASSWORD          
           ports:
             - name: http
               containerPort: 8080
