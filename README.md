@@ -63,6 +63,18 @@ This creates a resource group, an Azure Container Registry, a one-node AKS clust
 3. Watch the run in the Actions tab.
 4. Refresh the application: the new message and commit appear on the page.
 
+## Rollout history and rollback
+
+Each pipeline deploy records its commit as the revision's change cause.
+
+```bash
+kubectl -n gradecalc rollout history deployment/gradecalc
+kubectl -n gradecalc rollout history deployment/gradecalc --revision=2
+kubectl -n gradecalc rollout undo deployment/gradecalc --to-revision=1
+```
+
+Only changes to the pod template create a revision, so scaling does not. A rollback reuses the old ReplicaSet under a new revision number. After a manual edit, set the change cause yourself with `kubectl annotate`, or the new revision repeats the previous one.
+
 ## Clean up
 
 The cluster bills for as long as it exists. Delete everything when you finish:

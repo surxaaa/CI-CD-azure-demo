@@ -149,7 +149,9 @@ jobs:
         run: pipx install ansible-core
 
       - name: Deploy to Kubernetes with Ansible
-        run: ansible-playbook -i ansible/inventory.ini ansible/deploy.yml -e "image=$IMAGE"
+        run: |
+          export CHANGE_CAUSE="$(git log -1 --format='%h %s')"
+          ansible-playbook -i ansible/inventory.ini ansible/deploy.yml -e "image=$IMAGE"
 
       - name: Verify deployment status
         run: |

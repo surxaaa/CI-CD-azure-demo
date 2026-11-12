@@ -11,6 +11,8 @@
     namespace: gradecalc
     rollout_timeout: 180s
     manifest_dir: "{{ playbook_dir }}/../k8s"
+    # Recorded on the revision; the pipeline sets it to the commit being deployed.
+    change_cause: "{{ lookup('env', 'CHANGE_CAUSE') | default('Manual deploy of ' ~ image, true) }}"
 
   tasks:
     - name: Require an image to deploy
